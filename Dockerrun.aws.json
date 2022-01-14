@@ -1,0 +1,52 @@
+{
+  "AWSEBDockerrunVersion": 2,
+  "containerDefinitions": [{
+    "name": "client",
+    "image": "ajay286/book-exchange-client",
+    "hostname": "client",
+    "essential": false,
+    "memory": 128
+  },
+    {
+      "name": "server",
+      "image": "ajay286/book-exchange-server",
+      "hostname": "api",
+      "essential": false,
+      "memory": 128,
+      "links": ["mongodb"]
+    },
+    {
+      "name": "mongodb",
+      "image": "ajay286/book-exchange-mongodb",
+      "hostname": "mongodb",
+      "essential": false,
+      "memory": 128,
+      "portMappings": [
+        {
+          "hostPort": 27017,
+          "containerPort": 27017
+        }
+      ],
+      "environment" : [
+        { "name" : "MONGODB_USER", "value" : "mongodb" },
+        { "name" : "MONGODB_DATABASE", "value" : "reading-monk-db" },
+        { "name" : "MONGODB_PASS", "value" : "mongodb" },
+        { "name" : "MONGO_INITDB_ROOT_USERNAME", "value" : "mongodb" },
+        { "name" : "MONGO_INITDB_ROOT_PASSWORD", "value" : "mongodb" },
+        { "name" : "MONGO_INITDB_DATABASE", "value" : "reading-monk-db" }
+      ]
+    },
+    {
+      "name": "nginx",
+      "image": "ajay286/book-exchange-nginx",
+      "essential": true,
+      "memory": 128,
+      "portMappings": [{
+        "hostPort": 80,
+        "containerPort": 80
+      }],
+      "links": ["client", "server","mongodb"]
+    }
+  ]
+
+}

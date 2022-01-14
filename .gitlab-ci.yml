@@ -1,0 +1,93 @@
+cache:
+  key: "$CI_BUILD_NAME"
+  untracked: true
+
+stages:
+  - build
+  - test
+  - configure
+  - deploy
+
+image: docker:latest
+services:
+  - docker:dind
+
+stage-build-master:
+  stage: build
+  before_script:
+    - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_ID" --password-stdin
+    - docker info
+    - docker build -t ajay286/book-exchange-app -f ./client/Dockerfile.dev ./client
+    - docker run -e CI=true ajay286/book-exchange-app npm test -- --coverage --updateSnapshot
+  script:
+    - docker build -t ajay286/book-exchange-client  ./client
+    - docker build -t ajay286/book-exchange-nginx  ./nginx
+    - docker build -t ajay286/book-exchange-server  ./server
+    - docker build -t ajay286/book-exchange-mongodb  ./mongodb
+    # Take the build images and push these images to docker repo.
+    - docker push ajay286/book-exchange-client
+    - docker push ajay286/book-exchange-nginx
+    - docker push ajay286/book-exchange-server
+    - docker push ajay286/book-exchange-mongodb
+  only:
+    - master
+
+stage-build-others:
+  stage: build
+#  before_script:
+#    - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_ID" --password-stdin
+#    - docker info
+  script:
+    - docker build -t ajay286/book-exchange-client:test  ./client
+    - docker build -t ajay286/book-exchange-nginx:test  ./nginx
+    - docker build -t ajay286/book-exchange-server:test  ./server
+  except:
+    - master
+
+stage-test:
+  stage: test
+#  before_script:
+#    - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_ID" --password-stdin
+#    - docker info
+  script:
+    - docker build -t ajay286/book-exchange-app -f ./client/Dockerfile.dev ./client
+    - docker run -e CI=true ajay286/book-exchange-app npm test -- --coverage --updateSnapshot
+    - docker network rm projectnetwork || true && docker network create projectnetwork
+#    - docker run -d --name mongo_db --network projectnetwork -e  MONGO_INITDB_ROOT_USERNAME='mongodb' -e  MONGO_INITDB_ROOT_PASSWORD='mongodb' -e  MONGO_INITDB_DATABASE='reading-monk-db' -e  MONGODB_USER='mongodb' -e  MONGODB_DATABASE='reading-monk-db' -e  MONGODB_PASS='mongodb'  mongo:4.2-bionic
+    - docker build -t ajay286/book-exchange-api-server -f ./server/Dockerfile.dev ./server
+    - docker run --network projectnetwork -e CI=true -e  REDIS_HOST=redis -e  REDIS_PORT=6379 -e  MONGO_INITDB_ROOT_USERNAME=mongodb -e  MONGO_INITDB_ROOT_PASSWORD=mongodb -e  MONGO_INITDB_DATABASE=reading-monk-db -e  MONGO_HOST=mongo_db -e  MONGO_PORT=27017 -e  MONGODB_USER=mongodb -e  MONGODB_DATABASE=reading-monk-db -e  MONGODB_PASS=mongodb -e  TOKEN_SECRET=secret_for_jwt -e  MAILGUN_API_KEY=b41f34fb6db4435bc82f59e8eafa62fc-ed32d817f-ea3c12753 -e  MAILGUN_DOMAIN=sandboxaa83f7dd451f4e09b457a736dbadbc73.mailgun.org ajay286/book-exchange-api-server npm test
+    - docker stop mongo-db || true
+    - docker network rm projectnetwork
+
+configure-aws:
+  image: kowalski0000/awscli:latest
+  stage: configure
+  only:
+    - master
+  artifacts:
+    paths:
+      - config/
+  script:
+    - mkdir -p config
+    - printf "[eb-cli]\naws_access_key_id = %s\naws_secret_access_key = %s\n" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" > config/aws_credentials
+    - printf "[profile eb-cli]\nregion=us-east-1\noutput=json" > config/aws_config
+
+
+
+eb-deploy:
+  image: kowalski0000/awscli:latest
+  stage: deploy
+  variables:
+    GIT_STRATEGY: clone
+  only:
+    - master
+  dependencies:
+    - configure-aws
+  before_script:
+    - mkdir -p ~/.aws/
+    - cp config/aws_credentials ~/.aws/credentials
+    - cp config/aws_config ~/.aws/config
+  script:
+    - eb use eb use Readingmonkprod-env
+    - printf '\n' | eb init --region us-east-1 reading-monk-prod
+    - eb deploy --staged
